@@ -15,36 +15,60 @@ A self-updating Python agent that connects to the Agent Management Platform via 
 
 ## Quick Start
 
+### One-Line Install (from GitHub)
+
 ```bash
-# 1. Configure (optional - defaults work for test environment)
-nano config.yaml
+# Basic install (uses hostname as agent ID)
+curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash
 
-# 2. Install
-./install.sh
+# With custom agent ID
+curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash -s -- --id my-macbook-001
 
-# 3. Check logs
-tail -f /opt/remote-agent/agent.log  # macOS
-sudo journalctl -u remote-agent -f   # Linux
+# With custom agent ID and server
+curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash -s -- --id my-agent --server https://my-server.workers.dev
+```
+
+### One-Line Uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-uninstall.sh | bash
 ```
 
 ---
 
-## Installation
+## Installation Options
+
+### Option 1: Remote Install (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash -s -- --id my-agent-001
+```
+
+Parameters:
+- `--id <name>` - Agent ID (default: hostname)
+- `--server <url>` - Server URL (default: test server)
+- `--repo <url>` - Repository base URL
+- `--dir <path>` - Install directory (default: /opt/remote-agent)
+
+### Option 2: Local Install
+
+```bash
+# Clone or download the agent folder
+git clone https://github.com/batmunkh0612/macos-agent-with-python.git
+cd macos-agent-with-python
+
+# Configure
+nano config.yaml
+
+# Install
+./install.sh
+```
 
 ### Prerequisites
 
 - Python 3.8+
-- pip
-
-### Install Agent
-
-```bash
-# Navigate to agent directory
-cd /path/to/agent
-
-# Run installation script
-./install.sh
-```
+- curl (for remote install)
+- sudo access
 
 The script will:
 1. Create `/opt/remote-agent` directory
