@@ -1,0 +1,19 @@
+server:
+  ws_url: wss://agent-management-platform-service-test.shagai.workers.dev/ws
+  graphql_url: https://agent-management-platform-service-test.shagai.workers.dev/graphql
+
+agent:
+  id: imac-001  # Will use hostname if not set
+  heartbeat_interval: 30  # seconds
+  poll_interval: 60  # fallback polling interval
+
+plugins:
+  auto_sync: true
+  sync_interval: 300  # 5 minutes
+
+# Auto-update settings
+updates:
+  auto_update: false          # Set to true to enable automatic updates
+  check_interval: 3600        # Check for updates every hour (in seconds)
+  update_url: ""              # Optional: Direct URL to download updates from
+                              # Leave empty to use server's getAgentUpdate query
