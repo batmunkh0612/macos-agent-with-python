@@ -29,9 +29,9 @@ logger = logging.getLogger('Agent')
 # =============================================================================
 # VERSION INFO - Update this when releasing new versions
 # =============================================================================
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 RELEASE_DATE = "2026-02-04"
-RELEASE_NOTES = "Added batch commands, auto-update, improved plugin system"
+RELEASE_NOTES = "Serial number as unique agent ID, auto-detection support"
 # =============================================================================
 
 # Paths - use absolute paths based on script location
@@ -39,6 +39,73 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.yaml")
 PLUGINS_DIR = os.path.join(SCRIPT_DIR, "plugins")
 AGENT_FILE = os.path.join(SCRIPT_DIR, "agent.py")
+
+
+def get_machine_id() -> str:
+    """
+    Get unique machine identifier.
+    - macOS: Uses hardware serial number (unique per device)
+    - Linux: Uses machine-id or generates from hardware info
+    - Fallback: hostname
+    """
+    import subprocess
+    
+    try:
+        if sys.platform == 'darwin':
+            # macOS - get hardware serial number
+            result = subprocess.run(
+                ['ioreg', '-l'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            for line in result.stdout.split('\n'):
+                if 'IOPlatformSerialNumber' in line:
+                    # Extract serial: "IOPlatformSerialNumber" = "XXXXXXXXXX"
+                    serial = line.split('"')[-2]
+                    if serial and len(serial) > 5:
+                        return f"mac-{serial.lower()}"
+            
+            # Fallback: try system_profiler
+            result = subprocess.run(
+                ['system_profiler', 'SPHardwareDataType'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            for line in result.stdout.split('\n'):
+                if 'Serial Number' in line:
+                    serial = line.split(':')[-1].strip()
+                    if serial:
+                        return f"mac-{serial.lower()}"
+        
+        elif sys.platform == 'linux':
+            # Linux - try machine-id first
+            machine_id_files = [
+                '/etc/machine-id',
+                '/var/lib/dbus/machine-id'
+            ]
+            for path in machine_id_files:
+                if os.path.exists(path):
+                    with open(path, 'r') as f:
+                        machine_id = f.read().strip()[:12]
+                        return f"linux-{machine_id}"
+            
+            # Fallback: try DMI serial
+            result = subprocess.run(
+                ['sudo', 'dmidecode', '-s', 'system-serial-number'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return f"linux-{result.stdout.strip().lower()}"
+    
+    except Exception as e:
+        logger.warning(f"Could not get machine ID: {e}")
+    
+    # Final fallback: hostname
+    return socket.gethostname().lower().replace(' ', '-')
 
 class AgentConfig:
     """Configuration manager"""
@@ -64,7 +131,7 @@ class AgentConfig:
                 'graphql_url': 'https://your-worker.workers.dev/graphql',
             },
             'agent': {
-                'id': socket.gethostname(),
+                'id': get_machine_id(),  # Uses serial number on macOS
                 'heartbeat_interval': 30,
                 'poll_interval': 60,
             },
@@ -362,7 +429,15 @@ class Agent:
     
     def __init__(self, config_file: str = CONFIG_FILE):
         self.config = AgentConfig(config_file)
-        self.agent_id = self.config.get('agent.id')
+        
+        # Get agent ID - use serial number if "auto" or empty
+        configured_id = self.config.get('agent.id')
+        if not configured_id or configured_id.lower() == 'auto':
+            self.agent_id = get_machine_id()
+            logger.info(f"Auto-detected machine ID: {self.agent_id}")
+        else:
+            self.agent_id = configured_id
+        
         self.version = VERSION
         
         # Components
@@ -626,15 +701,21 @@ class Agent:
                 result = {"success": True, "plugins": self.plugin_manager.list_plugins()}
             
             elif cmd_type == 'get_status':
+                # Determine if ID was auto-detected or configured
+                configured_id = self.config.get('agent.id')
+                id_source = "auto-detected (serial)" if not configured_id or configured_id.lower() == 'auto' else "configured"
+                
                 result = {
                     "success": True,
                     "agent_id": self.agent_id,
+                    "id_source": id_source,
                     "version": self.version,
                     "release_date": RELEASE_DATE,
                     "release_notes": RELEASE_NOTES,
                     "uptime": time.time(),
                     "plugins": self.plugin_manager.list_plugins(),
-                    "ws_connected": self.ws_connected
+                    "ws_connected": self.ws_connected,
+                    "platform": sys.platform
                 }
             
             # Self-update commands

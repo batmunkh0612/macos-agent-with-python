@@ -103,9 +103,32 @@ echo -e "${GREEN}✓ Files downloaded${NC}"
 # Generate config
 echo -e "${YELLOW}Generating configuration...${NC}"
 
-# Use hostname if agent ID not provided
+# Get unique machine ID if agent ID not provided
 if [ -z "$AGENT_ID" ]; then
-    AGENT_ID=$(hostname | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS - use hardware serial number (unique per device)
+        SERIAL=$(ioreg -l | grep IOPlatformSerialNumber | awk -F'"' '{print $4}')
+        if [ -n "$SERIAL" ]; then
+            AGENT_ID="mac-$(echo $SERIAL | tr '[:upper:]' '[:lower:]')"
+        else
+            # Fallback to system_profiler
+            SERIAL=$(system_profiler SPHardwareDataType | grep "Serial Number" | awk '{print $4}')
+            if [ -n "$SERIAL" ]; then
+                AGENT_ID="mac-$(echo $SERIAL | tr '[:upper:]' '[:lower:]')"
+            fi
+        fi
+    else
+        # Linux - use machine-id
+        if [ -f /etc/machine-id ]; then
+            MACHINE_ID=$(cat /etc/machine-id | head -c 12)
+            AGENT_ID="linux-$MACHINE_ID"
+        fi
+    fi
+    
+    # Final fallback to hostname
+    if [ -z "$AGENT_ID" ]; then
+        AGENT_ID=$(hostname | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+    fi
 fi
 
 cat > "$INSTALL_DIR/config.yaml" << EOF

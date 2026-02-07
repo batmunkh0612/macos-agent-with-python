@@ -3,7 +3,9 @@ server:
   graphql_url: https://agent-management-platform-service-test.shagai.workers.dev/graphql
 
 agent:
-  id: imac-001  # Will use hostname if not set
+  # id: mac-xxxxxxxxxx  # Leave empty or "auto" to use serial number
+  # Format: mac-{serial} on macOS, linux-{machine-id} on Linux
+  id: auto
   heartbeat_interval: 30  # seconds
   poll_interval: 60  # fallback polling interval
 

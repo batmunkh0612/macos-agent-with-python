@@ -18,10 +18,10 @@ A self-updating Python agent that connects to the Agent Management Platform via 
 ### One-Line Install (from GitHub)
 
 ```bash
-# Basic install (uses hostname as agent ID)
+# Basic install (auto-detects serial number as agent ID)
 curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash
 
-# With custom agent ID
+# With custom agent ID (override serial number)
 curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash -s -- --id my-macbook-001
 
 # With custom agent ID and server
@@ -36,16 +36,36 @@ curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-pytho
 
 ---
 
+## Agent ID (Unique Identification)
+
+By default, the agent uses the **hardware serial number** as its unique ID:
+- **macOS**: `mac-{serial}` (e.g., `mac-c02fl0hexxx`)
+- **Linux**: `linux-{machine-id}` (e.g., `linux-a1b2c3d4e5f6`)
+- **Fallback**: Hostname if serial unavailable
+
+This ensures each device has a **globally unique ID** that doesn't change, even after:
+- Hostname changes
+- OS reinstall
+- Network changes
+
+To override, specify `--id` during install or set `agent.id` in `config.yaml`.
+
+---
+
 ## Installation Options
 
 ### Option 1: Remote Install (Recommended)
 
 ```bash
+# Auto-detect serial number
+curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash
+
+# Or with custom ID
 curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash -s -- --id my-agent-001
 ```
 
 Parameters:
-- `--id <name>` - Agent ID (default: hostname)
+- `--id <name>` - Agent ID (default: auto-detect serial number)
 - `--server <url>` - Server URL (default: test server)
 - `--repo <url>` - Repository base URL
 - `--dir <path>` - Install directory (default: /opt/remote-agent)
@@ -203,7 +223,11 @@ server:
   graphql_url: https://agent-management-platform-service-test.shagai.workers.dev/graphql
 
 agent:
-  id: my-agent-001      # Unique agent ID (uses hostname if not set)
+  # Agent ID options:
+  # - "auto": Use hardware serial number (recommended, unique per device)
+  # - Custom value: Set your own ID (e.g., "office-mac-001")
+  # Format: mac-{serial} on macOS, linux-{machine-id} on Linux
+  id: auto
   heartbeat_interval: 30  # seconds
   poll_interval: 60       # fallback polling interval when WebSocket is down
 
