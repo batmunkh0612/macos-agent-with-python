@@ -28,6 +28,13 @@ curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-pytho
 curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash -s -- --id my-agent --server https://my-server.workers.dev
 ```
 
+### One-Line Update
+
+```bash
+# Update installed agent to latest version (keeps your config)
+curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-update.sh | bash
+```
+
 ### One-Line Uninstall
 
 ```bash
@@ -138,25 +145,31 @@ echo "✅ Agent uninstalled"
 
 ## Update Agent
 
-### Quick Update (Recommended)
+### Update with curl (recommended)
+
+Update the installed agent to the latest version from the repo without touching your config:
 
 ```bash
-# Navigate to source directory with updated code
-cd /path/to/agent
-
-# Stop, reinstall, and start
-./update.sh  # or manually:
-
-# macOS
-launchctl unload ~/Library/LaunchAgents/com.remote-agent.plist
-./install.sh
-
-# Linux
-sudo systemctl stop remote-agent
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-update.sh | bash
 ```
 
-### Manual Update
+Options:
+
+- Custom repo: `curl -fsSL .../remote-update.sh | bash -s -- --repo https://raw.githubusercontent.com/your-repo/main`
+- Custom install dir: `... | bash -s -- --dir /opt/remote-agent`
+
+The script stops the agent, downloads the latest `agent.py` and plugins, keeps your existing `config.yaml`, refreshes dependencies, and restarts the agent.
+
+### Local update (when you have the source)
+
+```bash
+cd /path/to/agent
+
+# Stop, copy files, restart
+./update.sh
+```
+
+### Manual update
 
 ```bash
 # 1. Stop the agent
