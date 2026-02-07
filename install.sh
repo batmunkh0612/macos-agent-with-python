@@ -104,6 +104,8 @@ else
         <key>PYTHONUNBUFFERED</key>
         <string>1</string>
     </dict>
+    <key>NetworkState</key>
+    <true/>
 </dict>
 </plist>
 EOF

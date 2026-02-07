@@ -231,6 +231,13 @@ agent:
   heartbeat_interval: 30  # seconds
   poll_interval: 60       # fallback polling interval when WebSocket is down
 
+# Wait for network at startup (e.g. after boot before WiFi is ready)
+network:
+  wait_at_startup: true   # Set to false to start immediately
+  timeout: 120            # Max seconds to wait for network
+  check_interval: 5       # Seconds between connectivity checks
+  check_url: "https://www.google.com"   # URL to probe
+
 plugins:
   auto_sync: true         # Auto-sync plugins from server
   sync_interval: 300      # 5 minutes
@@ -241,6 +248,8 @@ updates:
   check_interval: 3600    # Check for updates every hour (in seconds)
   update_url: ""          # Optional: Direct URL to download updates from
 ```
+
+At startup, the agent can wait for network (see `network.wait_at_startup`) so it works after boot when WiFi is not ready yet. On macOS, the launchd plist also uses `NetworkState` so the service starts only when the system has network.
 
 ### Auto-Update Configuration
 

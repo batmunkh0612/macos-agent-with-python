@@ -9,6 +9,13 @@ agent:
   heartbeat_interval: 30  # seconds
   poll_interval: 60  # fallback polling interval
 
+# Wait for network before starting (e.g. after boot before WiFi is ready)
+network:
+  wait_at_startup: true      # Wait for network before starting
+  timeout: 120               # Max seconds to wait
+  check_interval: 5          # Seconds between checks
+  check_url: "https://www.google.com"   # URL to probe
+
 plugins:
   auto_sync: true
   sync_interval: 300  # 5 minutes

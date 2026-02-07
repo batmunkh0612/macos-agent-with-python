@@ -12,6 +12,7 @@ import socket
 import logging
 import threading
 import importlib.util
+import urllib.request
 from typing import Dict, Any, Optional
 from datetime import datetime
 
@@ -107,6 +108,31 @@ def get_machine_id() -> str:
     # Final fallback: hostname
     return socket.gethostname().lower().replace(' ', '-')
 
+
+def wait_for_network(
+    timeout: int = 120,
+    check_interval: int = 5,
+    check_url: str = "https://www.google.com",
+) -> bool:
+    """
+    Wait for network connectivity before starting.
+    Returns True when probe succeeds, False on timeout.
+    """
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            urllib.request.urlopen(check_url, timeout=3)
+            elapsed = int(time.time() - start_time)
+            logger.info(f"Network available after {elapsed}s")
+            return True
+        except Exception:
+            elapsed = int(time.time() - start_time)
+            logger.info(f"Waiting for network... {elapsed}s")
+            time.sleep(check_interval)
+    logger.error("Network not available after timeout")
+    return False
+
+
 class AgentConfig:
     """Configuration manager"""
     
@@ -138,7 +164,13 @@ class AgentConfig:
             'plugins': {
                 'auto_sync': True,
                 'sync_interval': 300,  # 5 minutes
-            }
+            },
+            'network': {
+                'wait_at_startup': True,
+                'timeout': 120,
+                'check_interval': 5,
+                'check_url': 'https://www.google.com',
+            },
         }
     
     def get(self, key: str, default=None):
@@ -995,6 +1027,19 @@ class Agent:
 
 def main():
     """Main entry point"""
+    config = AgentConfig(CONFIG_FILE)
+    wait_at_startup = config.get('network.wait_at_startup', True)
+    if wait_at_startup:
+        timeout = config.get('network.timeout', 120)
+        check_interval = config.get('network.check_interval', 5)
+        check_url = config.get('network.check_url', 'https://www.google.com')
+        if not wait_for_network(
+            timeout=timeout,
+            check_interval=check_interval,
+            check_url=check_url,
+        ):
+            logger.error("Exiting: network not available")
+            sys.exit(1)
     agent = Agent()
     agent.start()
 
