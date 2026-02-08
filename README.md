@@ -17,28 +17,39 @@ A self-updating Python agent that connects to the Agent Management Platform via 
 
 ### One-Line Install (from GitHub)
 
+Use your repo’s **raw GitHub base URL** for the agent folder (replace `OWNER`, `REPO`, `BRANCH`):
+
 ```bash
-# Basic install (auto-detects serial number as agent ID)
-curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash
+# Base URL for this monorepo's agent (no trailing slash)
+REPO_BASE="https://raw.githubusercontent.com/OWNER/REPO/BRANCH/apps/enrollment-tracking/realtime-tv/agent-management-platform-service/agent"
 
-# With custom agent ID (override serial number)
-curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash -s -- --id my-macbook-001
+# Install (auto-detects serial number as agent ID)
+curl -fsSL "$REPO_BASE/remote-install.sh" | bash -s -- --repo "$REPO_BASE"
 
-# With custom agent ID and server
-curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-install.sh | bash -s -- --id my-agent --server https://my-server.workers.dev
+# With custom agent ID
+curl -fsSL "$REPO_BASE/remote-install.sh" | bash -s -- --repo "$REPO_BASE" --id my-macbook-001
+
+# With custom server
+curl -fsSL "$REPO_BASE/remote-install.sh" | bash -s -- --repo "$REPO_BASE" --id my-agent --server https://my-server.workers.dev
+```
+
+Or in one line (replace the URL with your actual raw base):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/BRANCH/apps/enrollment-tracking/realtime-tv/agent-management-platform-service/agent/remote-install.sh | bash -s -- --repo https://raw.githubusercontent.com/OWNER/REPO/BRANCH/apps/enrollment-tracking/realtime-tv/agent-management-platform-service/agent
 ```
 
 ### One-Line Update
 
 ```bash
-# Update installed agent to latest version (keeps your config)
-curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-update.sh | bash
+REPO_BASE="https://raw.githubusercontent.com/OWNER/REPO/BRANCH/apps/enrollment-tracking/realtime-tv/agent-management-platform-service/agent"
+curl -fsSL "$REPO_BASE/remote-update.sh" | bash -s -- --repo "$REPO_BASE"
 ```
 
 ### One-Line Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/batmunkh0612/macos-agent-with-python/main/remote-uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/BRANCH/apps/enrollment-tracking/realtime-tv/agent-management-platform-service/agent/remote-uninstall.sh | bash
 ```
 
 ---
@@ -430,6 +441,8 @@ The server should:
 ```
 
 **User management** (use `action`): `create_user`, `delete_user`, `list_users`, `user_exists`
+
+User management needs root. Either run the agent as root (e.g. `sudo python agent.py` or a systemd service running as root) or configure [passwordless sudo](https://apple.stackexchange.com/questions/257813/enable-sudo-without-password-for-a-specific-user-and-command) for `dscl`, `sysadminctl`, and `rm` as used by this plugin.
 
 ```json
 { "type": "plugin_command", "plugin": "system", "args": { "action": "list_users" } }

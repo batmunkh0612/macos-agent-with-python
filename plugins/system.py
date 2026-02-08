@@ -15,6 +15,24 @@ import psutil
 
 logger = logging.getLogger("Plugin.System")
 
+SUDO_HINT = (
+    " User management requires root. Either run the agent as root "
+    "(e.g. sudo python agent.py) or configure passwordless sudo for sysadminctl."
+)
+
+
+def _is_root():
+    """True if process has root privileges (no sudo needed)."""
+    try:
+        return os.geteuid() == 0
+    except AttributeError:
+        return False
+
+
+def _root_cmd(*args):
+    """Prefix with sudo when not running as root."""
+    return ([] if _is_root() else ["sudo"]) + list(args)
+
 
 def handle(args):
     """
@@ -102,7 +120,7 @@ def _create_user(args):
         return {"success": False, "error": "Missing username"}
     logger.info("Creating user: %s", username)
     try:
-        cmd = ["sudo", "sysadminctl", "-addUser", username, "-fullName", fullname]
+        cmd = _root_cmd("sysadminctl", "-addUser", username, "-fullName", fullname)
         if password:
             cmd.extend(["-password", password])
         if is_admin:
@@ -118,9 +136,11 @@ def _create_user(args):
                 "stdout": result.stdout,
             }
         logger.error("Failed to create user %s: %s", username, result.stderr)
+        err = result.stderr or ""
+        hint = SUDO_HINT if ("password" in err or "terminal" in err) else ""
         return {
             "success": False,
-            "error": f"Failed to create user: {result.stderr}",
+            "error": f"Failed to create user: {result.stderr}{hint}",
             "stdout": result.stdout,
             "stderr": result.stderr,
             "returncode": result.returncode,
@@ -133,68 +153,114 @@ def _create_user(args):
 
 
 def _delete_user(args):
-    """Delete a user account (macOS dscl + optional home removal)."""
+    """Delete a user account (macOS sysadminctl with optional secure deletion)."""
     username = args.get("username")
-    secure = args.get("secure", True)
+    secure = args.get("secure", True)  # Delete home directory by default
+    
     if not username:
         return {"success": False, "error": "Missing username"}
+    
     logger.info("Deleting user: %s (secure=%s)", username, secure)
+    
     try:
-        result = subprocess.run(
-            ["sudo", "dscl", ".", "-delete", f"/Users/{username}"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            logger.error("Failed to delete user record: %s", result.stderr)
-            return {
-                "success": False,
-                "error": f"Failed to delete user record: {result.stderr}",
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
-        home_dir = f"/Users/{username}"
-        if secure and os.path.exists(home_dir):
-            rm_result = subprocess.run(
-                ["sudo", "rm", "-rf", home_dir],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if rm_result.returncode != 0:
-                logger.warning("Failed to delete home directory: %s", rm_result.stderr)
-        subprocess.run(
-            ["sudo", "dscl", ".", "-delete", f"/Groups/{username}"],
+        # First check if user exists
+        check_result = subprocess.run(
+            ["dscl", ".", "-list", "/Users"],
             capture_output=True,
             text=True,
             timeout=10,
         )
+        
+        if username not in check_result.stdout.split("\n"):
+            logger.warning("User %s does not exist", username)
+            return {
+                "success": False,
+                "error": f"User {username} does not exist",
+                "user_exists": False,
+            }
+        
+        # Use sysadminctl to delete user (modern macOS method)
+        # -deleteUser requires -secure flag to also delete home directory
+        cmd = _root_cmd("sysadminctl", "-deleteUser", username)
+        
+        if secure:
+            cmd.append("-secure")  # This will securely delete the home directory
+        
+        logger.info("Executing delete command: %s", " ".join(cmd))
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,  # Longer timeout for secure deletion
+        )
+        
+        if result.returncode != 0:
+            logger.error("Failed to delete user %s: %s", username, result.stderr)
+            err = result.stderr or ""
+            hint = SUDO_HINT if ("password" in err or "terminal" in err or "Authentication" in err) else ""
+            return {
+                "success": False,
+                "error": f"Failed to delete user: {result.stderr}{hint}",
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "returncode": result.returncode,
+            }
+        
+        # Verify deletion
         verify = subprocess.run(
             ["dscl", ".", "-list", "/Users"],
             capture_output=True,
             text=True,
             timeout=10,
         )
-        if username in verify.stdout.split("\n"):
+        
+        user_list = verify.stdout.split("\n")
+        if username in user_list:
             logger.error("User %s still exists after deletion", username)
             return {
                 "success": False,
                 "error": f"User {username} still exists after deletion",
                 "verification_failed": True,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
             }
+        
+        # Check if home directory still exists
+        home_dir = f"/Users/{username}"
+        home_exists = os.path.exists(home_dir)
+        
+        if secure and home_exists:
+            logger.warning("Home directory still exists at %s, attempting manual cleanup", home_dir)
+            # Fallback: manually remove home directory if sysadminctl didn't
+            rm_result = subprocess.run(
+                _root_cmd("rm", "-rf", home_dir),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if rm_result.returncode != 0:
+                logger.error("Failed to remove home directory: %s", rm_result.stderr)
+                home_exists = os.path.exists(home_dir)
+            else:
+                home_exists = False
+        
         logger.info("User %s deleted successfully", username)
         return {
             "success": True,
             "message": f"User {username} deleted successfully",
             "username": username,
-            "home_deleted": secure,
+            "secure_delete": secure,
+            "home_directory_removed": not home_exists,
             "verified": True,
+            "stdout": result.stdout,
         }
+        
     except subprocess.TimeoutExpired:
+        logger.error("Delete command timed out for user %s", username)
         return {"success": False, "error": "Command timed out"}
     except Exception as e:
-        logger.error("Exception deleting user: %s", e)
+        logger.error("Exception deleting user %s: %s", username, e)
         return {"success": False, "error": str(e)}
 
 
