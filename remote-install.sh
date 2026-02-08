@@ -161,6 +161,32 @@ source venv/bin/activate
 pip install -q -r requirements.txt
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 
+# Setup passwordless sudo for user management
+echo -e "${YELLOW}Configuring sudo permissions for user management...${NC}"
+SUDOERS_FILE="/etc/sudoers.d/remote-agent"
+
+cat << SUDOEOF | sudo tee "$SUDOERS_FILE" > /dev/null
+# Remote Agent - Passwordless sudo for user management
+# Created: $(date)
+
+# Allow agent user to run sysadminctl without password
+$CURRENT_USER ALL=(ALL) NOPASSWD: /usr/sbin/sysadminctl
+
+# Allow agent user to remove home directories
+$CURRENT_USER ALL=(ALL) NOPASSWD: /bin/rm
+SUDOEOF
+
+# Set correct permissions
+sudo chmod 0440 "$SUDOERS_FILE"
+
+# Validate sudoers file
+if sudo visudo -c -f "$SUDOERS_FILE" >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ Passwordless sudo configured${NC}"
+else
+    echo -e "${YELLOW}⚠️  Warning: Could not validate sudoers file${NC}"
+    sudo rm -f "$SUDOERS_FILE"
+fi
+
 # Setup service
 echo -e "${YELLOW}Setting up system service...${NC}"
 
