@@ -417,19 +417,26 @@ The server should:
 }
 ```
 
-### system - System Information
+### system - System info and user management
+
+**System info** (use `info`): `all`, `cpu`, `memory`, `disk`, `network`
 
 ```json
 {
   "type": "plugin_command",
   "plugin": "system",
-  "args": {
-    "action": "info"
-  }
+  "args": { "info": "all" }
 }
 ```
 
-Actions: `info`, `disk`, `memory`, `cpu`
+**User management** (use `action`): `create_user`, `delete_user`, `list_users`, `user_exists`
+
+```json
+{ "type": "plugin_command", "plugin": "system", "args": { "action": "list_users" } }
+{ "type": "plugin_command", "plugin": "system", "args": { "action": "user_exists", "username": "jane" } }
+{ "type": "plugin_command", "plugin": "system", "args": { "action": "create_user", "username": "jane", "fullname": "Jane Doe", "admin": false } }
+{ "type": "plugin_command", "plugin": "system", "args": { "action": "delete_user", "username": "jane", "secure": true } }
+```
 
 ### nginx - Nginx Management
 
@@ -631,7 +638,7 @@ sudo chown -R $USER:$USER /opt/remote-agent
 └── plugins/           # Plugin directory
     ├── __init__.py
     ├── shell.py       # Shell command plugin
-    ├── system.py      # System info plugin
+    ├── system.py      # System info + user management plugin
     └── nginx.py       # Nginx management plugin
 ```
 
