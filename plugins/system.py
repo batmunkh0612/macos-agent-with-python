@@ -206,21 +206,30 @@ def _delete_user(args):
             }
 
         # Remove Secure Token when requested so sysadminctl can fully delete the account.
-        # Error -14120 means the target has Secure Token and the runner doesn't; use
-        # admin_user + admin_password (an admin that has Secure Token) when agent runs as root.
+        # Error -14120 means the target has Secure Token; use admin_user + admin_password first
+        # (admin must have Secure Token). Argument order: -adminUser/-adminPassword before -secureTokenOff.
         if remove_secure_token and user_password:
             admin_user = args.get("admin_user")
             admin_password = args.get("admin_password")
             logger.info("Removing Secure Token for user %s", username)
-            tok_cmd = _root_cmd("sysadminctl", "-secureTokenOff", username, "-password", user_password)
+            base = _root_cmd("sysadminctl")
             if admin_user and admin_password:
-                tok_cmd.extend(["-adminUser", admin_user, "-adminPassword", admin_password])
+                tok_cmd = base + ["-adminUser", admin_user, "-adminPassword", admin_password, "-secureTokenOff", username, "-password", user_password]
+            else:
+                tok_cmd = base + ["-secureTokenOff", username, "-password", user_password]
             tok_off = subprocess.run(tok_cmd, capture_output=True, text=True, timeout=30)
             if tok_off.returncode != 0:
-                logger.warning("Could not remove Secure Token: %s", tok_off.stderr or tok_off.stdout)
-            else:
-                logger.info("Secure Token removed for %s", username)
-                time.sleep(1)
+                err_msg = tok_off.stderr or tok_off.stdout or "Unknown error"
+                logger.warning("Could not remove Secure Token: %s", err_msg)
+                return {
+                    "success": False,
+                    "error": f"Could not remove Secure Token from {username}: {err_msg}",
+                    "secure_token_off_failed": True,
+                    "stdout": tok_off.stdout,
+                    "stderr": tok_off.stderr,
+                }
+            logger.info("Secure Token removed for %s", username)
+            time.sleep(1)
 
         # Use sysadminctl to delete user (modern macOS method)
         cmd = _root_cmd("sysadminctl", "-deleteUser", username)
