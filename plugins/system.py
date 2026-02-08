@@ -3,6 +3,8 @@
 System Plugin - System info and user management.
 - System info: cpu, memory, disk, network (via args['info']).
 - User management: create_user, delete_user, list_users, user_exists (via args['action']).
+  delete_user supports remove_secure_token (with password) and force_dscl_fallback so the
+  account is removed from Users & Groups when sysadminctl leaves the DS record.
 """
 
 import os
@@ -153,16 +155,40 @@ def _create_user(args):
         return {"success": False, "error": str(e)}
 
 
+def _secure_token_status(username):
+    """Return True if user has Secure Token (can block full account deletion)."""
+    try:
+        r = subprocess.run(
+            _root_cmd("sysadminctl", "-secureTokenStatus", username),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return "ENABLED" in (r.stdout or "") or "ENABLED" in (r.stderr or "")
+    except Exception:
+        return False
+
+
 def _delete_user(args):
-    """Delete a user account (macOS sysadminctl with optional secure deletion)."""
+    """Delete a user account (macOS sysadminctl with optional secure deletion).
+
+    If the user has a Secure Token (e.g. from FileVault), sysadminctl may remove
+    the home directory but leave the account in Users & Groups. Pass the user's
+    password with remove_secure_token=True to try disabling the token first,
+    or use force_dscl_fallback=True to remove the Directory Service record so
+    the user disappears from Users & Groups (home dir removed separately if needed).
+    """
     username = args.get("username")
     secure = args.get("secure", True)  # Delete home directory by default
-    
+    user_password = args.get("password")  # Optional: for secureTokenOff
+    remove_secure_token = args.get("remove_secure_token", False)
+    force_dscl_fallback = args.get("force_dscl_fallback", True)  # Remove from DS if sysadminctl didn't
+
     if not username:
         return {"success": False, "error": "Missing username"}
-    
+
     logger.info("Deleting user: %s (secure=%s)", username, secure)
-    
+
     try:
         # First check if user exists
         check_result = subprocess.run(
@@ -171,7 +197,7 @@ def _delete_user(args):
             text=True,
             timeout=10,
         )
-        
+
         if username not in check_result.stdout.split("\n"):
             logger.warning("User %s does not exist", username)
             return {
@@ -179,34 +205,38 @@ def _delete_user(args):
                 "error": f"User {username} does not exist",
                 "user_exists": False,
             }
-        
+
+        # Optional: remove Secure Token so sysadminctl can fully delete the account
+        if remove_secure_token and user_password and _secure_token_status(username):
+            logger.info("Removing Secure Token for user %s", username)
+            tok_off = subprocess.run(
+                _root_cmd("sysadminctl", "-secureTokenOff", username, "-password", user_password),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if tok_off.returncode != 0:
+                logger.warning("Could not remove Secure Token: %s", tok_off.stderr)
+            else:
+                time.sleep(1)
+
         # Use sysadminctl to delete user (modern macOS method)
-        # -deleteUser requires -secure flag to also delete home directory
         cmd = _root_cmd("sysadminctl", "-deleteUser", username)
-        
         if secure:
-            cmd.append("-secure")  # This will securely delete the home directory
-        
+            cmd.append("-secure")
+
         logger.info("Executing delete command: %s", " ".join(cmd))
-        
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=60,  # Longer timeout for secure deletion
+            timeout=60,
         )
-        
-        # Check if deletion command had critical errors
-        # Note: sysadminctl may return 0 and still output warnings/errors to stderr
-        # We need to check for actual failure messages, not just warnings
+
         if result.returncode != 0:
             err = result.stderr or ""
-            # Check if it's a real error or just warnings
             critical_errors = ["Authentication failed", "Permission denied", "command not found", "Invalid user"]
-            is_critical = any(error in err for error in critical_errors)
-            
-            if is_critical:
-                logger.error("Failed to delete user %s: %s", username, result.stderr)
+            if any(e in err for e in critical_errors):
                 hint = SUDO_HINT if ("password" in err or "terminal" in err or "Authentication" in err) else ""
                 return {
                     "success": False,
@@ -215,26 +245,23 @@ def _delete_user(args):
                     "stderr": result.stderr,
                     "returncode": result.returncode,
                 }
-        
-        # Check for successful deletion indicators in stderr
-        stderr_lower = result.stderr.lower() if result.stderr else ""
+
+        stderr_lower = (result.stderr or "").lower()
         deletion_success_indicators = [
             "deleting record for",
             "securely removing",
-            "killing all processes for uid"
+            "killing all processes for uid",
         ]
-        deletion_started = any(indicator in stderr_lower for indicator in deletion_success_indicators)
-        
-        # Wait a moment for directory service to update (deletion is async)
+        deletion_started = any(i in stderr_lower for i in deletion_success_indicators)
+
         if deletion_started:
             logger.info("Deletion command executed, waiting for directory service to update...")
             time.sleep(2)
-        
-        # Verify deletion with retry logic
+
         max_retries = 3
         retry_delay = 1
         user_still_exists = False
-        
+
         for attempt in range(max_retries):
             verify = subprocess.run(
                 ["dscl", ".", "-list", "/Users"],
@@ -242,53 +269,63 @@ def _delete_user(args):
                 text=True,
                 timeout=10,
             )
-            
             user_list = [u.strip() for u in verify.stdout.split("\n") if u.strip()]
             user_still_exists = username in user_list
-            
             if not user_still_exists:
                 logger.info("User %s verified as deleted (attempt %d/%d)", username, attempt + 1, max_retries)
                 break
-            
             if attempt < max_retries - 1:
-                logger.info("User still in list, retrying verification in %ds (attempt %d/%d)", retry_delay, attempt + 1, max_retries)
                 time.sleep(retry_delay)
-        
-        if user_still_exists:
-            # User still exists after retries - but check if deletion actually started
-            if deletion_started:
-                logger.warning("Deletion command executed but user still in directory - may be async delay")
-                # Don't fail completely if we saw deletion messages
-                pass
+
+        # If user still in Directory Service (still shows in Users & Groups), try dscl fallback
+        if user_still_exists and force_dscl_fallback:
+            logger.warning("User still in Directory Service after sysadminctl; removing record with dscl")
+            dscl_remove = subprocess.run(
+                _root_cmd("dscl", ".", "-delete", f"/Users/{username}"),
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if dscl_remove.returncode == 0:
+                time.sleep(1)
+                final = subprocess.run(
+                    ["dscl", ".", "-list", "/Users"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                user_still_exists = username in (final.stdout or "").split("\n")
             else:
-                logger.error("User %s still exists after deletion and no deletion messages seen", username)
-                return {
-                    "success": False,
-                    "error": f"User {username} still exists after deletion",
-                    "verification_failed": True,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                }
-        
-        # Check if home directory still exists
+                logger.warning("dscl fallback failed: %s", dscl_remove.stderr)
+
+        if user_still_exists:
+            hint = (
+                " User may have Secure Token; try delete_user with remove_secure_token=True and password, "
+                "or check System Preferences > Users & Groups."
+            )
+            return {
+                "success": False,
+                "error": f"User {username} still appears in Users & Groups.{hint}",
+                "verification_failed": True,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+
         home_dir = f"/Users/{username}"
         home_exists = os.path.exists(home_dir)
-        
         if secure and home_exists:
             logger.warning("Home directory still exists at %s, attempting manual cleanup", home_dir)
-            # Fallback: manually remove home directory if sysadminctl didn't
             rm_result = subprocess.run(
                 _root_cmd("rm", "-rf", home_dir),
                 capture_output=True,
                 text=True,
                 timeout=60,
             )
-            if rm_result.returncode != 0:
-                logger.error("Failed to remove home directory: %s", rm_result.stderr)
-                home_exists = os.path.exists(home_dir)
-            else:
+            if rm_result.returncode == 0:
                 home_exists = False
-        
+            else:
+                logger.error("Failed to remove home directory: %s", rm_result.stderr)
+
         logger.info("User %s deleted successfully", username)
         return {
             "success": True,
@@ -296,11 +333,10 @@ def _delete_user(args):
             "username": username,
             "secure_delete": secure,
             "home_directory_removed": not home_exists,
-            "verified": not user_still_exists,
-            "deletion_executed": deletion_started,
+            "verified": True,
             "stdout": result.stdout,
         }
-        
+
     except subprocess.TimeoutExpired:
         logger.error("Delete command timed out for user %s", username)
         return {"success": False, "error": "Command timed out"}

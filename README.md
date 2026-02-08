@@ -451,6 +451,8 @@ User management needs root. Either run the agent as root (e.g. `sudo python agen
 { "type": "plugin_command", "plugin": "system", "args": { "action": "delete_user", "username": "jane", "secure": true } }
 ```
 
+If a deleted user still appears in **System Preferences > Users & Groups**, the account may have a **Secure Token** (e.g. from FileVault). The plugin now removes the Directory Service record by default (`force_dscl_fallback: true`) so the user disappears from Users & Groups; the home directory is removed separately if needed. For accounts with Secure Token, you can pass the user's password and `remove_secure_token: true` so `sysadminctl` can fully delete the account first.
+
 ### nginx - Nginx Management
 
 ```json
