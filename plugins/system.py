@@ -172,11 +172,10 @@ def _secure_token_status(username):
 def _delete_user(args):
     """Delete a user account (macOS sysadminctl with optional secure deletion).
 
-    If the user has a Secure Token (e.g. from FileVault), sysadminctl may remove
-    the home directory but leave the account in Users & Groups. Pass the user's
-    password with remove_secure_token=True to try disabling the token first,
-    or use force_dscl_fallback=True to remove the Directory Service record so
-    the user disappears from Users & Groups (home dir removed separately if needed).
+    If the user has a Secure Token (Error -14120), pass remove_secure_token=True and
+    password=<user's password>. When the agent runs as root (no Secure Token), also
+    pass admin_user and admin_password for an admin that has Secure Token so we can
+    run secureTokenOff. force_dscl_fallback removes the DS record if sysadminctl didn't.
     """
     username = args.get("username")
     secure = args.get("secure", True)  # Delete home directory by default
@@ -206,18 +205,21 @@ def _delete_user(args):
                 "user_exists": False,
             }
 
-        # Optional: remove Secure Token so sysadminctl can fully delete the account
-        if remove_secure_token and user_password and _secure_token_status(username):
+        # Remove Secure Token when requested so sysadminctl can fully delete the account.
+        # Error -14120 means the target has Secure Token and the runner doesn't; use
+        # admin_user + admin_password (an admin that has Secure Token) when agent runs as root.
+        if remove_secure_token and user_password:
+            admin_user = args.get("admin_user")
+            admin_password = args.get("admin_password")
             logger.info("Removing Secure Token for user %s", username)
-            tok_off = subprocess.run(
-                _root_cmd("sysadminctl", "-secureTokenOff", username, "-password", user_password),
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
+            tok_cmd = _root_cmd("sysadminctl", "-secureTokenOff", username, "-password", user_password)
+            if admin_user and admin_password:
+                tok_cmd.extend(["-adminUser", admin_user, "-adminPassword", admin_password])
+            tok_off = subprocess.run(tok_cmd, capture_output=True, text=True, timeout=30)
             if tok_off.returncode != 0:
-                logger.warning("Could not remove Secure Token: %s", tok_off.stderr)
+                logger.warning("Could not remove Secure Token: %s", tok_off.stderr or tok_off.stdout)
             else:
+                logger.info("Secure Token removed for %s", username)
                 time.sleep(1)
 
         # Use sysadminctl to delete user (modern macOS method)
@@ -233,10 +235,24 @@ def _delete_user(args):
             timeout=60,
         )
 
-        if result.returncode != 0:
-            err = result.stderr or ""
+        err = result.stderr or ""
+        if result.returncode != 0 or "Error:-14120" in err or "-14120" in err:
+            if "14120" in err:
+                hint = (
+                    " User has Secure Token; deletion failed (eDSPermissionError). Remove the token first: "
+                    "call delete_user with remove_secure_token=true, password=<user's password>, and if the "
+                    "agent runs as root, also pass admin_user and admin_password for an admin that has Secure Token."
+                )
+                return {
+                    "success": False,
+                    "error": f"Secure Token blocked deletion (Error -14120).{hint}",
+                    "verification_failed": True,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "returncode": result.returncode,
+                }
             critical_errors = ["Authentication failed", "Permission denied", "command not found", "Invalid user"]
-            if any(e in err for e in critical_errors):
+            if result.returncode != 0 and any(e in err for e in critical_errors):
                 hint = SUDO_HINT if ("password" in err or "terminal" in err or "Authentication" in err) else ""
                 return {
                     "success": False,

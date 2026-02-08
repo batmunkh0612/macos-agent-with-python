@@ -451,7 +451,7 @@ User management needs root. Either run the agent as root (e.g. `sudo python agen
 { "type": "plugin_command", "plugin": "system", "args": { "action": "delete_user", "username": "jane", "secure": true } }
 ```
 
-If a deleted user still appears in **System Preferences > Users & Groups**, the account may have a **Secure Token** (e.g. from FileVault). The plugin now removes the Directory Service record by default (`force_dscl_fallback: true`) so the user disappears from Users & Groups; the home directory is removed separately if needed. For accounts with Secure Token, you can pass the user's password and `remove_secure_token: true` so `sysadminctl` can fully delete the account first.
+If a deleted user still appears in **System Preferences > Users & Groups**, the account may have a **Secure Token** (e.g. from FileVault). If you get **Error -14120**, the account has Secure Token and the account running the agent does not. Pass `remove_secure_token: true` and `password` (the **target user's** password). When the agent runs as **root**, also pass **admin_user** and **admin_password** for an admin that has Secure Token (e.g. the first local admin): `delete_user` will use those to run `sysadminctl -secureTokenOff` before deleting. Example: `{ "action": "delete_user", "username": "jane", "secure": true, "remove_secure_token": true, "password": "janes_pass", "admin_user": "AdminName", "admin_password": "AdminPass" }`.
 
 ### nginx - Nginx Management
 
