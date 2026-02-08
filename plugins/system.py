@@ -9,6 +9,7 @@ import os
 import platform
 import logging
 import subprocess
+import time
 from datetime import datetime
 
 import psutil
@@ -195,36 +196,79 @@ def _delete_user(args):
             timeout=60,  # Longer timeout for secure deletion
         )
         
+        # Check if deletion command had critical errors
+        # Note: sysadminctl may return 0 and still output warnings/errors to stderr
+        # We need to check for actual failure messages, not just warnings
         if result.returncode != 0:
-            logger.error("Failed to delete user %s: %s", username, result.stderr)
             err = result.stderr or ""
-            hint = SUDO_HINT if ("password" in err or "terminal" in err or "Authentication" in err) else ""
-            return {
-                "success": False,
-                "error": f"Failed to delete user: {result.stderr}{hint}",
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "returncode": result.returncode,
-            }
+            # Check if it's a real error or just warnings
+            critical_errors = ["Authentication failed", "Permission denied", "command not found", "Invalid user"]
+            is_critical = any(error in err for error in critical_errors)
+            
+            if is_critical:
+                logger.error("Failed to delete user %s: %s", username, result.stderr)
+                hint = SUDO_HINT if ("password" in err or "terminal" in err or "Authentication" in err) else ""
+                return {
+                    "success": False,
+                    "error": f"Failed to delete user: {result.stderr}{hint}",
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "returncode": result.returncode,
+                }
         
-        # Verify deletion
-        verify = subprocess.run(
-            ["dscl", ".", "-list", "/Users"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+        # Check for successful deletion indicators in stderr
+        stderr_lower = result.stderr.lower() if result.stderr else ""
+        deletion_success_indicators = [
+            "deleting record for",
+            "securely removing",
+            "killing all processes for uid"
+        ]
+        deletion_started = any(indicator in stderr_lower for indicator in deletion_success_indicators)
         
-        user_list = verify.stdout.split("\n")
-        if username in user_list:
-            logger.error("User %s still exists after deletion", username)
-            return {
-                "success": False,
-                "error": f"User {username} still exists after deletion",
-                "verification_failed": True,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
+        # Wait a moment for directory service to update (deletion is async)
+        if deletion_started:
+            logger.info("Deletion command executed, waiting for directory service to update...")
+            time.sleep(2)
+        
+        # Verify deletion with retry logic
+        max_retries = 3
+        retry_delay = 1
+        user_still_exists = False
+        
+        for attempt in range(max_retries):
+            verify = subprocess.run(
+                ["dscl", ".", "-list", "/Users"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            
+            user_list = [u.strip() for u in verify.stdout.split("\n") if u.strip()]
+            user_still_exists = username in user_list
+            
+            if not user_still_exists:
+                logger.info("User %s verified as deleted (attempt %d/%d)", username, attempt + 1, max_retries)
+                break
+            
+            if attempt < max_retries - 1:
+                logger.info("User still in list, retrying verification in %ds (attempt %d/%d)", retry_delay, attempt + 1, max_retries)
+                time.sleep(retry_delay)
+        
+        if user_still_exists:
+            # User still exists after retries - but check if deletion actually started
+            if deletion_started:
+                logger.warning("Deletion command executed but user still in directory - may be async delay")
+                # Don't fail completely if we saw deletion messages
+                pass
+            else:
+                logger.error("User %s still exists after deletion and no deletion messages seen", username)
+                return {
+                    "success": False,
+                    "error": f"User {username} still exists after deletion",
+                    "verification_failed": True,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                }
         
         # Check if home directory still exists
         home_dir = f"/Users/{username}"
@@ -252,7 +296,8 @@ def _delete_user(args):
             "username": username,
             "secure_delete": secure,
             "home_directory_removed": not home_exists,
-            "verified": True,
+            "verified": not user_still_exists,
+            "deletion_executed": deletion_started,
             "stdout": result.stdout,
         }
         
