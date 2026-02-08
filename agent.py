@@ -804,8 +804,8 @@ class Agent:
                         )
                 threading.Thread(target=do_restart, daemon=True).start()
             
-            # Plugin commands
-            elif cmd_type == 'plugin_command':
+            # Plugin commands (accept both 'plugin_command' and 'plugin')
+            elif cmd_type in ('plugin_command', 'plugin'):
                 plugin_name = command.get('plugin')
                 args = command.get('args', {})
                 
